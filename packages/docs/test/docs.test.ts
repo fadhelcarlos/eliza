@@ -26,6 +26,7 @@ function readDocsConfig() {
 
 function normalizeRoute(route) {
   const cleanRoute = route
+    .replaceAll("\\", "/")
     .split("#")[0]
     .split("?")[0]
     .replace(/^\/+/, "")
@@ -163,17 +164,77 @@ function resolveInternalTarget(sourceFile, href) {
 }
 
 function extractMarkdownFrontmatter(content) {
-  if (!content.startsWith("---\n")) {
+  const normalizedContent = content.replaceAll("\r\n", "\n");
+
+  if (!normalizedContent.startsWith("---\n")) {
     return null;
   }
 
-  const end = content.indexOf("\n---", 4);
-  if (end === -1) {
-    return { closed: false, body: content.slice(4) };
+  const closingDelimiter = /\n---(?:\n|$)/.exec(normalizedContent.slice(4));
+  if (!closingDelimiter) {
+    return { closed: false, body: normalizedContent.slice(4) };
   }
 
-  return { closed: true, body: content.slice(4, end) };
+  return {
+    closed: true,
+    body: normalizedContent.slice(4, 4 + closingDelimiter.index),
+  };
 }
+
+describe("docs test helpers", () => {
+  it("normalizes Windows path separators before route cleanup", () => {
+    assert.strictEqual(
+      normalizeRoute("\\advanced\\database.mdx?tab=storage#configuration"),
+      "advanced/database",
+    );
+    assert.strictEqual(
+      normalizeRoute("/advanced/database.mdx?tab=storage#configuration"),
+      "advanced/database",
+    );
+  });
+
+  it("extracts LF and CRLF frontmatter equivalently", () => {
+    const lfContent =
+      "---\ntitle: Database\ndescription: Storage configuration\n---\nBody\n";
+    const crlfContent = lfContent.replaceAll("\n", "\r\n");
+
+    assert.deepStrictEqual(
+      extractMarkdownFrontmatter(crlfContent),
+      extractMarkdownFrontmatter(lfContent),
+    );
+    assert.deepStrictEqual(extractMarkdownFrontmatter(lfContent), {
+      closed: true,
+      body: "title: Database\ndescription: Storage configuration",
+    });
+  });
+
+  it("keeps unterminated LF and CRLF frontmatter fail-closed", () => {
+    for (const content of [
+      "---\ntitle: Database\n",
+      "---\r\ntitle: Database\r\n",
+    ]) {
+      assert.deepStrictEqual(extractMarkdownFrontmatter(content), {
+        closed: false,
+        body: "title: Database\n",
+      });
+    }
+  });
+
+  it("rejects malformed LF and CRLF closing delimiters", () => {
+    for (const newline of ["\n", "\r\n"]) {
+      for (const malformedDelimiter of ["---oops", "----"]) {
+        const content = ["---", "title: Database", malformedDelimiter, ""].join(
+          newline,
+        );
+
+        assert.deepStrictEqual(extractMarkdownFrontmatter(content), {
+          closed: false,
+          body: `title: Database\n${malformedDelimiter}\n`,
+        });
+      }
+    }
+  });
+});
 
 describe("docs.json configuration", () => {
   it("docs.json exists and is valid JSON", () => {
@@ -353,9 +414,7 @@ describe("documentation files", () => {
     );
     const packageFiles = new Set(["AGENTS", "CLAUDE", "README"]);
     const hiddenPages = collectMarkdownFiles()
-      .map((file) =>
-        normalizeRoute(relative(DOCS_DIR, file).replaceAll("\\\\", "/")),
-      )
+      .map((file) => normalizeRoute(relative(DOCS_DIR, file)))
       .filter((page) => !packageFiles.has(page) && !navigationPages.has(page));
 
     assert.deepStrictEqual(
@@ -667,3 +726,4 @@ describe("documentation files", () => {
     assert.deepStrictEqual(missingRoutes, []);
   });
 });
+
