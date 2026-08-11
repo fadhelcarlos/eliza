@@ -726,4 +726,3 @@ describe("documentation files", () => {
     assert.deepStrictEqual(missingRoutes, []);
   });
 });
-
